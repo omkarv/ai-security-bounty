@@ -7,7 +7,7 @@ from typing import Dict
 
 
 def score_cve(cve: dict) -> int:
-    sev = cve.get("severity", "Low").lower()
+    sev = (cve.get("severity") or "Low").lower()
     mapping = {"critical": 5, "high": 4, "medium": 3, "low": 1}
     return mapping.get(sev, 1)
 

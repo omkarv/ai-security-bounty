@@ -14,14 +14,24 @@ from urllib import request, parse
 
 NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
-KEYWORDS = ["AI", "LLM", "machine learning", "prompt injection"]
+KEYWORDS = [
+    "large language model",
+    "prompt injection",
+    "machine learning model",
+    "ChatGPT",
+    "OpenAI",
+    "TensorFlow",
+    "PyTorch",
+    "Hugging Face",
+    "artificial intelligence model",
+    "generative AI",
+]
 
 
-def _build_url(limit: int = 20) -> str:
-    """Build the NVD 2.0 query URL with keyword filter."""
-    keyword_query = " ".join(KEYWORDS)
+def _build_url(keyword: str, limit: int = 20) -> str:
+    """Build the NVD 2.0 query URL for a single keyword."""
     params = {
-        "keywordSearch": keyword_query,
+        "keywordSearch": keyword,
         "resultsPerPage": str(limit),
     }
     return f"{NVD_API}?{parse.urlencode(params)}"
@@ -64,6 +74,17 @@ def _parse_vulnerability(item: dict) -> Dict:
 
     published_date = cve.get("published")
 
+    # Derive severity from CVSS score if not provided (common for older CVEs)
+    if severity is None and cvss_score is not None:
+        if cvss_score >= 9.0:
+            severity = "CRITICAL"
+        elif cvss_score >= 7.0:
+            severity = "HIGH"
+        elif cvss_score >= 4.0:
+            severity = "MEDIUM"
+        else:
+            severity = "LOW"
+
     return {
         "cve_id": cve_id,
         "summary": summary,
@@ -74,15 +95,30 @@ def _parse_vulnerability(item: dict) -> Dict:
 
 
 def fetch_cves(limit: int = 20) -> List[Dict]:
-    """Fetch CVEs from NVD 2.0 with keyword filtering.
+    """Fetch CVEs from NVD 2.0, querying each keyword separately and deduplicating.
+
+    NVD treats multiple words in keywordSearch as AND, so we search each
+    keyword individually and merge results by cve_id.
 
     Returns a list of dicts with keys:
         cve_id, summary, severity, cvss_score, published_date
     """
-    url = _build_url(limit)
-    req = request.Request(url, headers={"Accept": "application/json"})
-    with request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    seen: dict[str, Dict] = {}
+    per_keyword = max(limit, 20)
 
-    vulnerabilities = data.get("vulnerabilities", [])
-    return [_parse_vulnerability(v) for v in vulnerabilities[:limit]]
+    for keyword in KEYWORDS:
+        url = _build_url(keyword, per_keyword)
+        req = request.Request(url, headers={"Accept": "application/json"})
+        try:
+            with request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            continue
+
+        for item in data.get("vulnerabilities", []):
+            parsed = _parse_vulnerability(item)
+            cve_id = parsed.get("cve_id")
+            if cve_id and cve_id not in seen:
+                seen[cve_id] = parsed
+
+    return list(seen.values())[:limit]
